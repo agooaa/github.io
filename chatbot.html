@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ChatGPT Voice Chatbot</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f0f0f5;
+        }
+        #chat-container {
+            width: 60%;
+            margin: 0 auto;
+            border: 1px solid #ccc;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+            background: #ffffff;
+        }
+        #chat-box {
+            height: 300px;
+            overflow-y: auto;
+            border: 1px solid #ccc;
+            padding: 10px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            background: #fafafa;
+        }
+        .message {
+            margin-bottom: 10px;
+            word-wrap: break-word;
+        }
+        .user {
+            text-align: right;
+            color: blue;
+        }
+        .chatgpt {
+            text-align: left;
+            color: green;
+        }
+        #input-section {
+            display: flex;
+            align-items: center;
+        }
+        #user-input {
+            flex: 1;
+            padding: 10px;
+            border-radius: 5px;
+            border: 1px solid #ccc;
+        }
+        #send-btn, #mic-btn, #clear-btn {
+            padding: 10px 20px;
+            border-radius: 5px;
+            border: none;
+            margin-left: 10px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        #send-btn {
+            background-color: blue;
+            color: white;
+        }
+        #send-btn:hover {
+            background-color: darkblue;
+        }
+        #mic-btn {
+            background-color: #4CAF50;
+            color: white;
+        }
+        #mic-btn.active {
+            background-color: red;
+        }
+        #mic-btn.speaking {
+            background-color: #f39c12; /* Orange color to indicate speaking */
+        }
+        #mic-btn:hover {
+            background-color: #45a049;
+        }
+        #clear-btn {
+            background-color: #f44336; /* Red color */
+            color: white;
+        }
+        #clear-btn:hover {
+            background-color: #d32f2f;
+        }
+        .error-message {
+            color: red;
+            font-weight: bold;
+        }
+        /* Screen Reader Only */
+        .sr-only {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0,0,0,0);
+            border: 0;
+        }
+    </style>
+</head>
+<body>
+    <div id="chat-container" role="main">
+        <div id="chat-box" aria-live="polite" role="log">
+            <!-- Chat messages will appear here -->
+        </div>
+        <div id="input-section">
+            <label for="user-input" class="sr-only">Your message</label>
+            <input type="text" id="user-input" placeholder="Type your message here..." aria-label="Your message">
+            <button id="send-btn">Send</button>
+            <button id="mic-btn" aria-label="Start voice input">🎤</button>
+            <button id="clear-btn" aria-label="Clear chat">🗑️</button>
+        </div>
+    </div>
+
+    <script>
+        const chatBox = document.getElementById('chat-box');
+        const userInput = document.getElementById('user-input');
+        const sendBtn = document.getElementById('send-btn');
+        const micBtn = document.getElementById('mic-btn');
+        const clearBtn = document.getElementById('clear-btn');
+
+        // Replace with your OpenAI API key or fetch securely from the server
+        const apiKey = "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"; // ⚠️ IMPORTANT: Never expose your API key in client-side code.
+
+        // Function to detect if text contains Arabic characters
+        function isArabic(text) {
+            const arabicRegex = /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]/;
+            return arabicRegex.test(text);
+        }
+
+        // Initialize current language to English
+        let currentLanguage = 'en-US';
+
+        // Initialize Speech Recognition
+        let recognition;
+        let recognizing = false;
+
+        if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            recognition = new SpeechRecognition();
+            recognition.lang = currentLanguage;
+            recognition.interimResults = false;
+            recognition.maxAlternatives = 1;
+
+            recognition.onstart = () => {
+                recognizing = true;
+                micBtn.classList.add('active');
+                micBtn.setAttribute('aria-label', 'Stop voice input');
+            };
+
+            recognition.onend = () => {
+                recognizing = false;
+                micBtn.classList.remove('active');
+                micBtn.setAttribute('aria-label', 'Start voice input');
+            };
+
+            recognition.onresult = (event) => {
+                const transcript = event.results[0][0].transcript;
+                userInput.value = transcript;
+                sendMessage();
+            };
+
+            recognition.onerror = (event) => {
+                console.error('Speech Recognition Error:', event.error);
+                displayMessage("Speech recognition error. Please try again.", 'chatgpt error-message');
+            };
+        } else {
+            micBtn.disabled = true;
+            displayMessage("Speech Recognition not supported in this browser.", 'chatgpt error-message');
+        }
+
+        // Initialize Speech Synthesis
+        const synth = window.speechSynthesis;
+        let utterThis = null;
+        let isSpeaking = false;
+
+        async function sendMessage() {
+            const userMessage = userInput.value.trim();
+            if (!userMessage) {
+                alert("Please type a message or use voice input before sending.");
+                return;
+            }
+
+            // Display user's message
+            displayMessage(userMessage, 'user');
+            userInput.value = '';
+
+            // Detect language based on user message
+            currentLanguage = isArabic(userMessage) ? 'ar-SA' : 'en-US';
+
+            // Update recognition language if recognition is available
+            if (recognition) {
+                recognition.lang = currentLanguage;
+            }
+
+            // Call ChatGPT API
+            try {
+                const response = await fetch("https://api.openai.com/v1/chat/completions", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "Authorization": `Bearer ${apiKey}`
+                    },
+                    body: JSON.stringify({
+                        model: "o1-mini", // ✅ Corrected model name
+                        messages: [{ role: "user", content: userMessage }]
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`API Error: ${response.status}`);
+                }
+
+                const data = await response.json();
+                let chatbotMessage = data.choices[0]?.message?.content || "Sorry, I couldn't understand that.";
+
+                // Clean the chatbot's response
+                chatbotMessage = cleanText(chatbotMessage);
+
+                displayMessage(chatbotMessage, 'chatgpt');
+
+                // Speak the chatbot's response in the detected language
+                speak(chatbotMessage);
+            } catch (error) {
+                console.error("Error:", error);
+                displayMessage("Error connecting to ChatGPT API. Please try again later.", 'chatgpt error-message');
+            }
+        }
+
+        function stripMarkdown(text) {
+            // Remove bold (**), italics (*), and other markdown symbols
+            return text.replace(/\*\*(.*?)\*\*/g, '$1') // Remove bold
+                       .replace(/\*(.*?)\*/g, '$1')     // Remove italics
+                       .replace(/`(.*?)`/g, '$1')       // Remove inline code
+                       .replace(/~~(.*?)~~/g, '$1');    // Remove strikethrough
+        }
+
+        function cleanText(text) {
+            // Remove markdown
+            text = stripMarkdown(text);
+            // Remove all punctuation symbols except %
+            // This regex removes any character that is not a letter, number, whitespace, or %
+            // \p{L} matches any kind of letter from any language
+            // \p{N} matches any kind of numeric character
+            // Requires Unicode flag 'u'
+            text = text.replace(/[^\p{L}\p{N}\s%]/gu, '');
+            return text;
+        }
+
+        function displayMessage(message, senderClass) {
+            const messageElement = document.createElement('div');
+            messageElement.classList.add('message', senderClass);
+            messageElement.textContent = message;
+            chatBox.appendChild(messageElement);
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+
+        function speak(text) {
+            if (!synth) return;
+
+            // Cancel any ongoing speech
+            if (synth.speaking) {
+                synth.cancel();
+            }
+
+            utterThis = new SpeechSynthesisUtterance(text);
+            utterThis.lang = currentLanguage;
+
+            utterThis.onstart = () => {
+                isSpeaking = true;
+                micBtn.classList.add('speaking');
+                micBtn.setAttribute('aria-label', 'Stop speaking');
+                micBtn.innerHTML = '⏹️'; // Change icon to Stop
+            };
+
+            utterThis.onend = () => {
+                isSpeaking = false;
+                micBtn.classList.remove('speaking');
+                micBtn.setAttribute('aria-label', 'Start voice input');
+                micBtn.innerHTML = '🎤'; // Revert icon to microphone
+            };
+
+            utterThis.onerror = (event) => {
+                console.error('Speech Synthesis Error:', event.error);
+                isSpeaking = false;
+                micBtn.classList.remove('speaking');
+                micBtn.setAttribute('aria-label', 'Start voice input');
+                micBtn.innerHTML = '🎤'; // Revert icon to microphone
+            };
+
+            synth.speak(utterThis);
+        }
+
+        function stopSpeaking() {
+            if (synth.speaking) {
+                synth.cancel();
+            }
+        }
+
+        function clearChat() {
+            chatBox.innerHTML = '';
+        }
+
+        // Event listeners
+        sendBtn.addEventListener('click', sendMessage);
+        userInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') sendMessage();
+        });
+
+        micBtn.addEventListener('click', () => {
+            if (isSpeaking) {
+                // If the chatbot is speaking, stop the speech
+                stopSpeaking();
+                return;
+            }
+
+            if (recognizing) {
+                recognition.stop();
+                return;
+            }
+
+            // Before starting recognition, set the language based on currentLanguage
+            if (recognition) {
+                recognition.lang = currentLanguage;
+                recognition.start();
+            }
+        });
+
+        clearBtn.addEventListener('click', () => {
+            const confirmClear = confirm("Are you sure you want to clear the chat?");
+            if (confirmClear) {
+                clearChat();
+            }
+        });
+    </script>
+</body>
+</html>
